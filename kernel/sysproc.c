@@ -6,6 +6,7 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
 
 uint64
 sys_exit(void)
@@ -15,6 +16,47 @@ sys_exit(void)
     return -1;
   exit(n);
   return 0;  // not reached
+}
+
+uint64
+sys_trace(void)
+{
+	int num;
+	if (argint(0, &num) < 0) {
+		return -1;
+	}
+	struct proc* p = myproc();
+	char* mask = p->mask;
+	//将n转化为2进制数
+	for (int i = 0; i < MAX_MASK && num > 0; i++) {
+		if (num % 2 == 0) {
+			mask[i] = '0';
+		}
+		else {
+			mask[i] = '1';
+		}
+		num /= 2;
+	}
+	return 0;
+}
+
+uint64
+sys_sysinfo(void)
+{
+	struct sysinfo info;
+	uint64 addr;
+	struct proc* p = myproc();
+	if (argaddr(0, &addr) < 0) {
+		return -1;
+	}
+	//获取空闲空间数和空闲进程数
+	info.freemem = freemem_size();
+	info.nproc = proc_num();
+
+	if (copyout(p->pagetable, addr, (char*)&info, sizeof(info)) < 0) {
+		return -1;
+	}
+	return 0;
 }
 
 uint64

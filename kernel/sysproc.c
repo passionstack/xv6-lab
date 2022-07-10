@@ -8,6 +8,28 @@
 #include "proc.h"
 
 uint64
+sys_trace(void)
+{
+	int num;
+	if (argint(0, &num) < 0) {
+		return -1;
+	}
+	struct proc* p = myproc();
+	char* mask = p->mask;
+	//将n转化为2进制数
+	for (int i = 0; i < 23 && num > 0; i++) {
+		if (num % 2 == 0) {
+			mask[i] = '0';
+		}
+		else {
+			mask[i] = '1';
+		}
+		num >>= 1;
+	}
+	return 0;
+}
+
+uint64
 sys_exit(void)
 {
   int n;

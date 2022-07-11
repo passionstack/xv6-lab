@@ -5,6 +5,66 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
+
+pagetable_t kvmmake()
+{
+  pagetable_t kernel_pagetable = (pagetable_t) kalloc();
+  memset(kernel_pagetable, 0, PGSIZE);
+  
+  //uart registers
+  mappages(kernel_pagetable, UART0, PGSIZE, UART0, PTE_R | PTE_W);
+  
+  //virtio mmio disk interface
+  mappages(kernel_pagetable, VIRTIO0, PGSIZE, VIRTIO0, PTE_R | PTE_W);
+  
+  //PLIC
+  mappages(kernel_pagetable, PLIC, 0x400000, PLIC, PTE_R | PTE_W);
+  
+  //map kernel text executable and read-only
+  mappages(kernel_pagetable, KERNBASE, (uint64)etext-KERNBASE, KERNBASE, PTE_R | PTE_X);
+  
+  //map kernel data and the physical RAM we'll make use of
+  mappages(kernel_pagetable, (uint64)etext, PHYSTOP-(uint64)etext, (uint64)etext, PTE_R | PTE_W);
+  
+  //map the trampoline for trap entry/exit to the highest virtual address in the kernel
+  mappages(kernel_pagetable, TRAMPOLINE, PGSIZE, (uint64)trampoline, PTE_R | PTE_X);
+  
+  return kernel_pagetable;
+}
+
+static void
+rec_print(pagetable_t pagetable, int depth)
+{
+	for (int i = 0; i < 512; i++) {
+		//页表项
+		pte_t pte = pagetable[i];
+		if (pte & PTE_V) {
+			uint64 next = PTE2PA(pte);
+			if (depth > 1) {
+				printf(".. ");
+			}
+			if (depth > 0 ) {
+				printf(".. ");
+			}
+			printf("..%d: pte %p pa %p\n", i, pte, next);
+			//只针对深度为0和1的进行下一级的打印
+			if (depth < 2) {
+				rec_print((pagetable_t)next, depth + 1);
+			}
+		}
+	}
+}
+
+
+void
+vmprint(pagetable_t pagetable)
+{
+	printf("page table %p\n", pagetable);
+	rec_print(pagetable, 0);
+}
+
 
 /*
  * the kernel's page table.
@@ -21,30 +81,11 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
-  kernel_pagetable = (pagetable_t) kalloc();
-  memset(kernel_pagetable, 0, PGSIZE);
-
-  // uart registers
-  kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
-
-  // virtio mmio disk interface
-  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
+  kernel_pagetable = kvmmake();
+  
   // CLINT
-  kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+  mappages(kernel_pagetable, CLINT, 0x10000, CLINT, PTE_R | PTE_W);
 
-  // PLIC
-  kvmmap(PLIC, PLIC, 0x400000, PTE_R | PTE_W);
-
-  // map kernel text executable and read-only.
-  kvmmap(KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
-
-  // map kernel data and the physical RAM we'll make use of.
-  kvmmap((uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
-
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
-  kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -132,7 +173,7 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
   
-  pte = walk(kernel_pagetable, va, 0);
+  pte = walk(myproc()->kernel_pagetable, va, 0);
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
@@ -439,4 +480,13 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+void
+uvmfree2(pagetable_t pagetable, uint64 va, uint npages)
+{
+  if(npages > 0){
+    uvmunmap(pagetable, va, npages, 1);
+  }
+  freewalk(pagetable);
 }

@@ -5,7 +5,6 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
-
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -20,6 +19,9 @@ static void wakeup1(struct proc *chan);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
+
+extern char etext[];  // kernel.ld sets this to end of kernel code.
+
 
 // initialize the proc table at boot time.
 void
@@ -141,6 +143,22 @@ found:
   return p;
 }
 
+void
+proc_free_kernel_pagetable(uint64 kstack, pagetable_t pagetable, uint64 sz)
+{
+  uvmunmap(pagetable, UART0, 1, 0);
+  uvmunmap(pagetable, VIRTIO0, 1, 0);
+  //uvmunmap(pagetable, CLINT, 0x10000/PGSIZE, 0);
+  uvmunmap(pagetable, PLIC, 0x400000/PGSIZE, 0);
+  uvmunmap(pagetable, KERNBASE, ((uint64)etext-KERNBASE)/PGSIZE, 0);
+  uvmunmap(pagetable, (uint64)etext, (PHYSTOP-(uint64)etext)/PGSIZE, 0);
+  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+  
+  uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 0);
+  
+  uvmfree2(pagetable, kstack, 1);
+}
+
 // free a proc structure and the data hanging from it,
 // including user pages.
 // p->lock must be held.
@@ -152,7 +170,7 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   
   if(p->kernel_pagetable){
-    proc_free_kernel_pagetable(p->kstack, p->kernel_pagetable);
+    proc_free_kernel_pagetable(p->kstack, p->kernel_pagetable, p->sz);
   }
   p->kernel_pagetable = 0;
   
@@ -213,19 +231,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 }
 
 
-void
-proc_free_kernel_pagetable(uint64 kstack, pagetable_t pagetable)
-{
-  uvmunmap(pagetable, UART0, 1, 0);
-  uvmunmap(pagetable, VIRTIO0, 1, 0);
-  uvmunmap(pagetable, CLINT, 0x10000/PGSIZE, 0);
-  uvmunmap(pagetable, PLIC, 0x400000/PGSIZE, 0);
-  uvmunmap(pagetable, KERNBASE, ((uint64)etext-KERNBASE)/PGSIZE, 0);
-  uvmunmap(pagetable, (uint64)etext, (PHYSTOP-(uint64)etext)/PGSIZE, 0);
-  uvmunmap(pagetable, TRAMPOLINE, 1, 0);
-  
-  uvmfree2(pagetable, kstack, 1);
-}
+
 
 // a user program that calls exec("/init")
 // od -t xC initcode
@@ -244,6 +250,7 @@ void
 userinit(void)
 {
   struct proc *p;
+  pte_t *pte, *kernelPte;
 
   p = allocproc();
   initproc = p;
@@ -252,6 +259,11 @@ userinit(void)
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
+  
+  //
+  pte = walk(p->pagetable, 0, 0);
+  kernelPte = walk(p->kernel_pagetable, 0, 1);
+  *kernelPte = (*pte) & ~PTE_U;
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -290,9 +302,10 @@ growproc(int n)
 int
 fork(void)
 {
-  int i, pid;
+  int i, pid, j;
   struct proc *np;
   struct proc *p = myproc();
+  pte_t *pte, *kernelPte;
 
   // Allocate process.
   if((np = allocproc()) == 0){
@@ -305,6 +318,14 @@ fork(void)
     release(&np->lock);
     return -1;
   }
+  
+  //
+  for(j = 0; j< p->sz;j+=PGSIZE){
+    pte = walk(np->pagetable, j, 0);
+    kernelPte = walk(np->kernel_pagetable, j, 1);
+    *kernelPte = (*pte) & ~PTE_U;
+  }
+  
   np->sz = p->sz;
 
   np->parent = p;
@@ -734,3 +755,6 @@ procdump(void)
     printf("\n");
   }
 }
+
+
+

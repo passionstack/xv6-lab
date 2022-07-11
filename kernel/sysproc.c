@@ -42,13 +42,29 @@ uint64
 sys_sbrk(void)
 {
   int addr;
-  int n;
+  int n, j;
+  struct proc *p = myproc();
+  pte_t *pte, *kernelPte;
 
   if(argint(0, &n) < 0)
     return -1;
   addr = myproc()->sz;
   if(growproc(n) < 0)
     return -1;
+    
+  if(n>0){
+    for(j = addr;j < addr + n; j += PGSIZE){
+      pte = walk(p->pagetable, j, 0);
+      kernelPte = walk(p->kernel_pagetable, j, 1);
+      *kernelPte = (*pte) & ~PTE_U;
+    }
+  }
+  else{
+    for(j = addr - PGSIZE; j >= addr + n; j -= PGSIZE){
+      uvmunmap(p->kernel_pagetable, j, 1, 0);
+    }
+  }
+  
   return addr;
 }
 

@@ -108,5 +108,8 @@ struct proc {
   void (*handler)();           //alarm handle function
   uint64 spend;                //how many ticks have passed since the last call
   
+  struct trapframe *trapframeSave;
+  int waitReturn;
+  
   
 };

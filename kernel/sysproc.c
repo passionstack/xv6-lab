@@ -126,11 +126,13 @@ sys_sigalarm(void)
 uint64
 sys_sigreturn(void)
 {
+  struct proc* myProc = myproc();
+  switchTrapframe(myProc->trapframe, myProc->trapframeSave);
+  myProc->waitReturn = 0;
+
+
   return 0;
 }
-
-
-
 
 
 

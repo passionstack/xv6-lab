@@ -41,14 +41,28 @@ sys_wait(void)
 uint64
 sys_sbrk(void)
 {
-  int addr;
   int n;
 
   if(argint(0, &n) < 0)
     return -1;
-  addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  
+  struct proc *p = myproc();
+  uint64 addr = p->sz;
+  uint64 newSize = addr + n;
+  
+  //size is too big
+  if(newSize >= MAXVA){
+    return addr;
+  }
+  
+  if(n < 0){
+    uvmunmap(p->pagetable, PGROUNDUP(newSize), (PGROUNDUP(addr) - PGROUNDUP(newSize)) / PGSIZE, 1);
+  }
+  
+  //update the size
+  p->sz = newSize;
+  
+  
   return addr;
 }
 

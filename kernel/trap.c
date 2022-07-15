@@ -65,6 +65,12 @@ usertrap(void)
     intr_on();
 
     syscall();
+    
+  } else if(r_scause() == 13 || r_scause() == 15) {
+    uint64 va = r_stval();
+    if(handleCowFault(p->pagetable, va) == -1)
+      p->killed = 1;
+    
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {
@@ -81,6 +87,33 @@ usertrap(void)
     yield();
 
   usertrapret();
+}
+
+
+int handleCowFault(pagetable_t pagetable, uint64 va) 
+{
+  if(va > MAXVA) 
+    return -1;
+  pte_t *pte = walk(pagetable, va, 0);
+  if(pte == 0 || (*pte & (PTE_V)) == 0 || (*pte & PTE_U) == 0) 
+    return -1;
+  if(*pte & PTE_W) return 0;
+  
+  
+  if((*pte & PTE_COW) == 0) 
+    return -1;
+
+  uint64 pa = PTE2PA(*pte);
+  void *newPa = kalloc();
+  if(newPa == 0) {
+    printf("handleCowFault kalloc out of memory \n");
+    return -1;
+  }
+  *pte = (PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W | PA2PTE(newPa);
+  memmove((char*)newPa, (char*)pa, PGSIZE);
+  
+  kfree((void*)pa);
+  return 0;
 }
 
 //
